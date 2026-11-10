@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Focus Reader</title>
+<style>
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  background: #000;
+  color: #252525;
+  font-family: sans-serif;
+}
+
+#reader {
+  --page-height: min(88dvh, 129.68vw);
+  position: relative;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  width: calc(var(--page-height) * 105 / 148);
+  height: var(--page-height);
+  font-size: calc(var(--page-height) * 0.83 / 40);
+  padding: calc(var(--page-height) * 0.08) calc(var(--page-height) * 105 / 148 * 0.10) calc(var(--page-height) * 0.09);
+  overflow-x: auto;
+  background: #fffdf7;
+  scrollbar-width: none;
+}
+
+#reader::-webkit-scrollbar {
+  display: none;
+}
+
+.line {
+  font-family: "Yu Mincho", "Hiragino Mincho ProN", serif;
+  font-size: inherit;
+  line-height: 1.70;
+  letter-spacing: 0;
+  text-indent: 1em;
+  line-break: strict;
+  overflow-wrap: normal;
+  margin: 0;
+}
+
+.character {
+  color: #fffdf7;
+  transition: color 0.08s linear;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .character {
+    transition: none;
+  }
+}
+</style>
+</head>
+<body>
+<div id="reader" tabindex="0" aria-label="縦書きの読書エリア">
+<p class="line">市ヶ谷は、都心にありながら、水辺と坂道が街の表情をつくる場所である。駅の周辺には外濠が広がり、その両側に道路や鉄道、建物が並ぶ。地図ではひと続きに見える街も、歩けば高低差が感じられる。水面に近い場所から坂を上ると、視線の高さが変わり、建物の間から見える景色も移り変わる。</p>
+<p class="line">外濠に沿った道は、街の位置関係をつかむ手がかりになる。水辺に出れば空が開け、線路や橋の向きから、自分の進む方向を確かめやすい。一方、そこから奥へ入る道には坂や曲がり角があり、台地と谷が入り組む地形を感じられる。大通りの見通しと路地の細やかさが、近い距離の中で隣り合っている。</p>
+<p class="line">交通の中心は市ヶ谷駅である。ＪＲ中央・総武線の各駅停車、都営新宿線、東京メトロの有楽町線と南北線が乗り入れ、都内のさまざまな方向へ移動できる。ただし、同じ駅名でも路線ごとにホームや出入口の位置は異なる。目的地を探すときは、路線図だけでなく、地上に出る場所まで確かめておきたい。</p>
+<p class="line">市ヶ谷の街を知るには、駅からの距離に加え、坂の向きやお堀を渡る位置にも目を向けるとよい。地図上では近い建物でも、橋や交差点を経由すると歩く道筋は変わる。水辺、斜面、台地、そして鉄道が重なり合うことで、この街ならではの移動の感覚が生まれている。歩く速さで眺めると、その輪郭が見えてくる。</p>
+
+</div>
+<script>
+// 本文を1文字ずつspanで包み、本文順のリストを作る。
+const reader = document.getElementById("reader");
+const characters = [];
+reader.querySelectorAll(".line").forEach((line) => {
+  const text = line.textContent;
+  line.setAttribute("aria-label", text);
+  line.textContent = "";
+  for (const character of Array.from(text)) {
+    const span = document.createElement("span");
+    span.className = "character";
+    span.textContent = character;
+    span.setAttribute("aria-hidden", "true");
+    line.appendChild(span);
+    characters.push(span);
+  }
+});
+
+// 表示と操作の設定。距離の単位はピクセル。
+const clearRadiusPx = 20;
+const fadeDistancePx = 180;
+const paperColor = [255, 253, 247];
+const readDarkness = 0.10;
+const readTextColor = paperColor.map((channel) => channel * (1 - readDarkness));
+const wheelPixelsPerCharacter = 32;
+
+// 現在位置と、ホイール入力・描画予約の状態。
+let activeIndex = 0;
+let remainingWheelPixels = 0;
+let lastWheelTimeMs = 0;
+let scheduledFrameId = null;
+
+// 現在位置を画面内に収め、文字の表示と濃淡を更新する。
+function updateFocus() {
+  scheduledFrameId = null;
+  const active = characters[activeIndex];
+  if (!active) return;
+  // DOMの文字順をたどることで、列末から次の列頭へ進みます。
+  active.scrollIntoView({ behavior: "instant", block: "nearest", inline: "nearest" });
+  const focusRect = active.getBoundingClientRect();
+  const focusX = (focusRect.left + focusRect.right) / 2;
+  const focusY = (focusRect.top + focusRect.bottom) / 2;
+
+  // 同じ列の現在以前の文字だけ、距離に応じた濃さを計算する。
+  const focusStrengths = characters.map((character, index) => {
+    if (index > activeIndex) return 0;
+    const rect = character.getBoundingClientRect();
+    const centerX = (rect.left + rect.right) / 2;
+    const isSameColumn = Math.abs(centerX - focusX) < focusRect.width / 2;
+    if (!isSameColumn) return 0;
+    const distancePx = Math.max(rect.top - focusY, 0, focusY - rect.bottom);
+    return 1 - Math.min(Math.max((distancePx - clearRadiusPx) / fadeDistancePx, 0), 1);
+  });
+
+  // 未読文字は場所を残して隠し、既読文字には計算した色を付ける。
+  characters.forEach((character, index) => {
+    character.style.visibility = index > activeIndex ? "hidden" : "visible";
+    // 現在位置より前の文字は、グラデーションの外でも薄く残します。
+    const baseColor = index < activeIndex ? readTextColor : paperColor;
+    const rgb = baseColor.map((channel) => Math.round(channel * (1 - focusStrengths[index])));
+
+    character.style.color = `rgb(${rgb.join(", ")})`;
+
+  });
+}
+
+// 次の描画に合わせて更新する。予約済みなら重ねて予約しない。
+function scheduleUpdate() {
+  if (scheduledFrameId === null) scheduledFrameId = requestAnimationFrame(updateFocus);
+}
+
+// ホイールの移動量を文字数に変換する。
+window.addEventListener("wheel", (event) => {
+  if (event.ctrlKey || event.deltaY === 0) return;
+  event.preventDefault();
+
+  // deltaMode: 0はピクセル、1は行、2はページ。
+  const pixelsPerUnit = event.deltaMode === 1 ? 22 : event.deltaMode === 2 ? reader.clientHeight : 1;
+  const wheelDeltaPixels = event.deltaY * pixelsPerUnit;
+  const nowMs = performance.now();
+  const idleTimeMs = nowMs - lastWheelTimeMs;
+
+  // 操作が途切れたとき、または端数と逆方向の入力では端数をリセットする。
+  if (idleTimeMs > 180 || Math.sign(wheelDeltaPixels) !== Math.sign(remainingWheelPixels)) {
+    remainingWheelPixels = 0;
+  }
+  lastWheelTimeMs = nowMs;
+  remainingWheelPixels += wheelDeltaPixels;
+
+  // 1文字分に満たない移動量は、次の入力へ持ち越す。
+  const characterSteps = Math.trunc(remainingWheelPixels / wheelPixelsPerCharacter);
+  if (characterSteps === 0) return;
+  remainingWheelPixels -= characterSteps * wheelPixelsPerCharacter;
+
+  // 本文の先頭と末尾を越えないようにする。
+  activeIndex = Math.max(0, Math.min(characters.length - 1, activeIndex + characterSteps));
+  scheduleUpdate();
+}, { passive: false });
+
+// 配置が変わるタイミングと初回表示で更新する。
+window.addEventListener("resize", scheduleUpdate);
+if (document.fonts) document.fonts.ready.then(scheduleUpdate);
+scheduleUpdate();
+</script>
+
+</body>
+</html>
